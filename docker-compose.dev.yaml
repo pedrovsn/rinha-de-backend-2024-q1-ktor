@@ -1,0 +1,27 @@
+version: "3.5"
+
+services:
+  db:
+    image: docker.io/postgres:16
+    hostname: db
+    environment:
+      - POSTGRES_PASSWORD=123
+      - POSTGRES_USER=admin
+      - POSTGRES_DB=rinha
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./conf/postgresql/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./conf/postgresql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready", "-d", "db_prod"]
+      interval: 5s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: ".4"
+          memory: "250MB"
