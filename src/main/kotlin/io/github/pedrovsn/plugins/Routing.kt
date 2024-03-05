@@ -6,40 +6,82 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import java.sql.*
+import java.time.LocalDateTime
 import kotlinx.coroutines.*
+import kotlinx.serialization.Serializable
 
-fun Application.configureDatabases() {
-    val dbConnection: Connection = connectToPostgres(embedded = true)
-    val cityService = CityService(dbConnection)
+@Serializable
+data class CreateTransactionRequest(val tipo: String, val valor: Int, val descricao: String)
+
+@Serializable
+data class CreateTransactionResponse(val saldo: Int, val limite: Int)
+
+@Serializable
+data class TransactionDto(
+    val valor: Int,
+    val tipo: String,
+    val descricao: String,
+    @Serializable(with = DateSerializer::class) val realizadaEm: LocalDateTime
+)
+
+@Serializable
+data class BalanceDto(
+    val total: Int,
+    val limite: Int,
+    @Serializable(with = DateSerializer::class) val dataExtrato: LocalDateTime
+)
+
+@Serializable
+data class TransactionHistoryResponse(val saldo: BalanceDto, val ultimasTransacoes: List<TransactionDto>)
+
+fun Application.configureRouting() {
+    val dbConnection: Connection = connectToPostgres(embedded = false)
+    val transactionService = TransactionService(dbConnection)
     routing {
-        // Create city
-        post("/cities") {
-            val city = call.receive<City>()
-            val id = cityService.create(city)
-            call.respond(HttpStatusCode.Created, id)
+        // Create a Transaction for customer
+        post("/clientes/{id}/transacoes") {
+            val customerId = call.parameters["id"]?.toInt() ?: throw IllegalArgumentException("Invalid ID")
+            val createTransactionRequest = call.receive<CreateTransactionRequest>()
+
+            val customerCurrentStatus = transactionService.create(
+                customerId = customerId,
+                transactionType = createTransactionRequest.tipo,
+                description = createTransactionRequest.descricao,
+                amount = createTransactionRequest.valor
+            )
+
+            call.respond(
+                HttpStatusCode.OK,
+                CreateTransactionResponse(
+                    customerCurrentStatus.balance,
+                    customerCurrentStatus.creditLimit
+                )
+            )
         }
-        // Read city
-        get("/cities/{id}") {
-            val id = call.parameters["id"]?.toInt() ?: throw IllegalArgumentException("Invalid ID")
-            try {
-                val city = cityService.read(id)
-                call.respond(HttpStatusCode.OK, city)
-            } catch (e: Exception) {
-                call.respond(HttpStatusCode.NotFound)
-            }
-        }
-        // Update city
-        put("/cities/{id}") {
-            val id = call.parameters["id"]?.toInt() ?: throw IllegalArgumentException("Invalid ID")
-            val user = call.receive<City>()
-            cityService.update(id, user)
-            call.respond(HttpStatusCode.OK)
-        }
-        // Delete city
-        delete("/cities/{id}") {
-            val id = call.parameters["id"]?.toInt() ?: throw IllegalArgumentException("Invalid ID")
-            cityService.delete(id)
-            call.respond(HttpStatusCode.OK)
+        // Read last 10 Transactions for customer
+        get("/clientes/{id}/extrato") {
+            val customerId = call.parameters["id"]?.toInt() ?: throw IllegalArgumentException("Invalid ID")
+
+            val customerTransactions = transactionService.read(customerId)
+
+            call.respond(
+                HttpStatusCode.OK,
+                TransactionHistoryResponse(
+                    BalanceDto(
+                        total = customerTransactions.balance,
+                        limite = customerTransactions.creditLimit,
+                        dataExtrato = LocalDateTime.now()
+                    ),
+                    ultimasTransacoes = customerTransactions.transactions.map {
+                        TransactionDto(
+                            valor = it.amount,
+                            tipo = it.type,
+                            descricao = it.description,
+                            realizadaEm = it.createdAt!!
+                        )
+                    }
+                )
+            )
         }
     }
 }
